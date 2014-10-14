@@ -65,16 +65,42 @@ def timeSpentPerDay(segments):
 
 def timeLeftPrimaryOrReturned(segments):
     timeLeft = {"Time Left Home": None, "Time Back Home" : None}
-    for segmentGroupData in zip(segments[:-2], segments[1:-1], segments[2:]):
-        # for each sequence of 3 segments check if the 1st and 3rd segment is a place and 2nd is a move
-        if segmentGroupData[0]["type"] == 'place' and segmentGroupData[1]["type"] == 'move' and segmentGroupData[2]["type"] == "place":
-            startLocation = segmentGroupData[0]["place"]["location"]
-            endLocation = segmentGroupData[2]["place"]["location"]
-            if isLocPrimary(startLocation["lat"], startLocation["lon"]) and isLocSecondary(endLocation["lat"], endLocation["lon"]):
-                timeLeft["Time Left Home"] =  datetime.strptime(segmentGroupData[0]["endTime"], "%Y%m%dT%H%M%S-0400")
 
-            if isLocPrimary(endLocation["lat"], endLocation["lon"]) and isLocSecondary(startLocation["lat"], startLocation["lon"]):
-                timeLeft["Time Back Home"] =  datetime.strptime(segmentGroupData[2]["endTime"], "%Y%m%dT%H%M%S-0400")
+    earliestWorkStartTime = None
+    homeEndTime = None
+    latestWorkEndTime = None
+    homeStartTime = None
+
+    # Search work-segments for earliest start time and latest endtime of day
+    for segmentData in segments:
+        if segmentData["type"] == "place":
+            if isLocSecondary(segmentData["place"]["location"]["lat"], segmentData["place"]["location"]["lon"]):
+                if latestWorkEndTime == None:
+                    latestWorkEndTime = segmentData["endTime"]
+                elif minuteTransform(segmentData["endTime"]) > minuteTransform(latestWorkEndTime):
+                    latestWorkEndTime = segmentData["endTime"]
+                if earliestWorkStartTime == None:
+                    earliestWorkStartTime = segmentData["startTime"]
+                if minuteTransform(segmentData["startTime"]) < minuteTransform(earliestWorkStartTime):
+                    earliestWorkStartTime = segmentData["startTime"]
+
+    # then the Time Left Home is the endtime of the Latest home segment before it and similarly for Time Back Home
+    for segmentData in segments:
+        if segmentData["type"] == "place":
+            if isLocPrimary(segmentData["place"]["location"]["lat"], segmentData["place"]["location"]["lon"]):
+                if earliestWorkStartTime != None and minuteTransform(segmentData["endTime"]) < minuteTransform(earliestWorkStartTime):
+                    if homeEndTime == None:
+                        homeEndTime = segmentData["endTime"]
+                    elif minuteTransform(homeEndTime) < minuteTransform(segmentData["endTime"]):
+                        homeEndTime = segmentData["endTime"]
+                if latestWorkEndTime != None and minuteTransform(latestWorkEndTime) < minuteTransform(segmentData["startTime"]):
+                    if homeStartTime == None:
+                        homeStartTime = segmentData["startTime"]
+                    elif minuteTransform(segmentData["startTime"]) < minuteTransform(homeStartTime):
+                        homeStartTime = segmentData["startTime"]
+
+    timeLeft["Time Left Home"] =  None if homeEndTime == None else datetime.strptime(homeEndTime, "%Y%m%dT%H%M%S-0400")
+    timeLeft["Time Back Home"] =  None if homeStartTime == None else datetime.strptime(homeStartTime, "%Y%m%dT%H%M%S-0400")
     return timeLeft
 
 def geoDiameterPerDay(segments):
@@ -133,8 +159,9 @@ def main():
         perDayStats = []
         dateObject = datetime.strptime(dayJson["date"], "%Y%m%d")
         typeOfday = 'Weekday' if dateObject.weekday() < 5 else 'Weekend'
-        
+
         perDayStats.append(dayJson["date"][:8])
+        print dayJson["date"][:8]
         perDayStats.append(typeOfday)
 
         segments = dayJson['segments']
@@ -161,10 +188,11 @@ def main():
     # Compute Aggregate Stats
     meanStats.append(np.mean(geoDiameterWeekday, axis = 0))
     meanStats.append(np.mean(timeSpentWeekday, axis = 0))
-    meanStats.append(np.mean(filter(None, timeLeftWeekday), axis = 0))
+    # meanStats.append(sum(filter(None, timeLeftWeekday), axis = 0))
     pprint.pprint(meanStats)
-    with open('LocationAnalysis.csv', 'wb') as f:
+    with open('LocationTraceAnalysis.csv', 'wb') as f:
         writer = csv.writer(f)
+        writer.writerow(['Day', 'Weekday', 'Time at Home', 'Time at Work', 'Other Time', 'Time Left Home', 'Time Back Home', 'Geodiameter'])
         writer.writerows(aggregateStats)
         writer.writerows(meanStats)
 
